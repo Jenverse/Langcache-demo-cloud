@@ -150,7 +150,9 @@ export async function POST(request: NextRequest) {
       })
     } else {
       // Normal mode: Try LangCache first
+      const cacheStartTime = Date.now()
       const cacheResult = await searchLangCache(message, config)
+      const cacheLatency = Date.now() - cacheStartTime
 
       if (cacheResult.hit) {
         const estimatedInputTokens = Math.ceil(message.length / 4)
@@ -163,7 +165,7 @@ export async function POST(request: NextRequest) {
           similarity: cacheResult.similarity,
           cachedQuery: cacheResult.cachedQuery,
           userQuery: message,
-          latency: 0,
+          latency: cacheLatency, // Use actual measured cache latency instead of 0
           tokensSaved: estimatedTotalTokens,
         })
       }
