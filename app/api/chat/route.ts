@@ -6,6 +6,9 @@ interface Config {
   cacheId: string
   serviceKey: string
   shadowMode: boolean
+  ragEnabled: boolean
+  redisVectorUrl: string
+  redisVectorPassword: string
 }
 
 // ... existing searchLangCache and storeInLangCache functions ...
@@ -50,6 +53,53 @@ async function searchLangCache(query: string, config: Config) {
   }
 }
 
+async function searchRAGContext(query: string, config: Config) {
+  try {
+    if (!config.ragEnabled || !config.redisVectorUrl || !config.redisVectorPassword) {
+      return { found: false, context: "", sources: [] }
+    }
+
+    const response = await fetch("/api/vectors/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        openaiKey: config.openaiKey,
+        redisVectorUrl: config.redisVectorUrl,
+        redisVectorPassword: config.redisVectorPassword,
+        limit: 3,
+        threshold: 0.7,
+      }),
+    })
+
+    if (!response.ok) {
+      console.log(`RAG search failed: ${response.status}`)
+      return { found: false, context: "", sources: [] }
+    }
+
+    const result = await response.json()
+
+    if (result.success && result.results && result.results.length > 0) {
+      const context = result.results.map((r: any, index: number) => `[${index + 1}] ${r.content}`).join("\n\n")
+
+      const sources = result.results.map((r: any) => ({
+        documentId: r.documentId,
+        score: r.score,
+        content: r.content.substring(0, 100) + "...",
+      }))
+
+      return { found: true, context, sources }
+    }
+
+    return { found: false, context: "", sources: [] }
+  } catch (error) {
+    console.error("RAG search error:", error)
+    return { found: false, context: "", sources: [] }
+  }
+}
+
 async function storeInLangCache(query: string, response: string, config: Config) {
   try {
     if (!config.langcacheUrl || !config.cacheId || !config.serviceKey) {
@@ -78,8 +128,18 @@ async function storeInLangCache(query: string, response: string, config: Config)
   }
 }
 
-async function callOpenAI(query: string, config: Config) {
+async function callOpenAI(query: string, config: Config, ragContext?: string) {
   const startTime = Date.now()
+
+  let augmentedQuery = query
+  if (ragContext) {
+    augmentedQuery = `Context from knowledge base:
+${ragContext}
+
+Based on the above context, please answer the following question. If the context doesn't contain relevant information, answer based on your general knowledge:
+
+${query}`
+  }
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -89,7 +149,7 @@ async function callOpenAI(query: string, config: Config) {
     },
     body: JSON.stringify({
       model: "gpt-3.5-turbo",
-      messages: [{ role: "user", content: query }],
+      messages: [{ role: "user", content: augmentedQuery }],
       max_tokens: 500,
     }),
   })
@@ -121,14 +181,20 @@ export async function POST(request: NextRequest) {
     console.log("  Cache ID:", config.cacheId || "❌ Missing")
     console.log("  Service Key:", config.serviceKey ? `${config.serviceKey.substring(0, 8)}...` : "❌ Missing")
     console.log("  Shadow Mode:", config.shadowMode ? "ON" : "OFF")
+    console.log("  RAG Enabled:", config.ragEnabled ? "ON" : "OFF")
+    if (config.ragEnabled) {
+      console.log("  Redis Vector URL:", config.redisVectorUrl || "❌ Missing")
+      console.log("  Redis Password:", config.redisVectorPassword ? "✅ Set" : "❌ Missing")
+    }
     console.log("  Message:", message)
 
     if (config.shadowMode) {
-      // Shadow mode: Call both LangCache and OpenAI, always return OpenAI response
-      const [cacheResult, openaiResult] = await Promise.all([
+      const [cacheResult, ragResult] = await Promise.all([
         searchLangCache(message, config),
-        callOpenAI(message, config),
+        searchRAGContext(message, config),
       ])
+
+      const openaiResult = await callOpenAI(message, config, ragResult.context)
 
       // Store in cache if it was a miss (non-blocking)
       if (!cacheResult.hit) {
@@ -140,8 +206,10 @@ export async function POST(request: NextRequest) {
         cached: false, // Always show as fresh in shadow mode
         shadowMode: true,
         cacheHit: cacheResult.hit, // For metrics tracking
+        ragHit: ragResult.found, // For metrics tracking
         similarity: cacheResult.similarity,
         cachedQuery: cacheResult.cachedQuery,
+        ragSources: ragResult.sources,
         userQuery: message,
         latency: openaiResult.latency,
         tokensUsed: openaiResult.tokensUsed,
@@ -170,8 +238,12 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // Cache miss - call OpenAI
-      const openaiResult = await callOpenAI(message, config)
+      let ragResult = { found: false, context: "", sources: [] }
+      if (config.ragEnabled) {
+        ragResult = await searchRAGContext(message, config)
+      }
+
+      const openaiResult = await callOpenAI(message, config, ragResult.context)
 
       // Store in cache (non-blocking)
       storeInLangCache(message, openaiResult.content, config).catch(console.error)
@@ -179,6 +251,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         content: openaiResult.content,
         cached: false,
+        ragHit: ragResult.found,
+        ragSources: ragResult.sources,
         userQuery: message,
         latency: openaiResult.latency,
         tokensUsed: openaiResult.tokensUsed,

@@ -4,12 +4,20 @@ export interface QueryRecord {
   similarity?: number
   timestamp: number
   cacheHit: boolean
+  ragHit?: boolean
+  ragSources?: Array<{
+    documentId: string
+    score: number
+    content: string
+  }>
 }
 
 export interface MetricsData {
   totalRequests: number
   cacheHits: number
   cacheMisses: number
+  ragHits: number
+  ragMisses: number
   totalTokensSaved: number
   totalTokensUsed: number
   totalCostSaved: number
@@ -19,6 +27,7 @@ export interface MetricsData {
   averageLangcacheLatency: number
   averageOpenaiLatency: number
   cacheHitRate: number
+  ragHitRate: number
   queryRecords: QueryRecord[]
 }
 
@@ -41,6 +50,7 @@ export function getMetrics(): MetricsData {
       ...data,
       queryRecords: data.queryRecords || [], // Ensure queryRecords exists
       cacheHitRate: data.totalRequests > 0 ? (data.cacheHits / data.totalRequests) * 100 : 0,
+      ragHitRate: data.totalRequests > 0 ? (data.ragHits / data.totalRequests) * 100 : 0,
       averageLangcacheLatency:
         data.langcacheLatencies.length > 0
           ? data.langcacheLatencies.reduce((a: number, b: number) => a + b, 0) / data.langcacheLatencies.length
@@ -60,6 +70,8 @@ function getDefaultMetrics(): MetricsData {
     totalRequests: 0,
     cacheHits: 0,
     cacheMisses: 0,
+    ragHits: 0,
+    ragMisses: 0,
     totalTokensSaved: 0,
     totalTokensUsed: 0,
     totalCostSaved: 0,
@@ -69,6 +81,7 @@ function getDefaultMetrics(): MetricsData {
     averageLangcacheLatency: 0,
     averageOpenaiLatency: 0,
     cacheHitRate: 0,
+    ragHitRate: 0,
     queryRecords: [],
   }
 }
@@ -82,6 +95,12 @@ export function updateMetrics(update: {
   cachedQuery?: string
   similarity?: number
   cacheHit?: boolean // For shadow mode
+  ragHit?: boolean
+  ragSources?: Array<{
+    documentId: string
+    score: number
+    content: string
+  }>
 }) {
   if (typeof window === "undefined") return
 
@@ -90,6 +109,7 @@ export function updateMetrics(update: {
   const tokensSaved = update.tokensSaved || 0
   const tokensUsed = update.tokensUsed || 0
   const actualCacheHit = update.cacheHit !== undefined ? update.cacheHit : update.cached
+  const ragHit = update.ragHit || false
 
   const queryRecord: QueryRecord | null = update.userQuery
     ? {
@@ -98,6 +118,8 @@ export function updateMetrics(update: {
         similarity: update.similarity,
         timestamp: Date.now(),
         cacheHit: actualCacheHit,
+        ragHit: ragHit,
+        ragSources: update.ragSources,
       }
     : null
 
@@ -105,6 +127,8 @@ export function updateMetrics(update: {
     totalRequests: current.totalRequests + 1,
     cacheHits: current.cacheHits + (actualCacheHit ? 1 : 0),
     cacheMisses: current.cacheMisses + (actualCacheHit ? 0 : 1),
+    ragHits: current.ragHits + (ragHit ? 1 : 0),
+    ragMisses: current.ragMisses + (ragHit ? 0 : 1),
     totalTokensSaved: current.totalTokensSaved + tokensSaved,
     totalTokensUsed: current.totalTokensUsed + tokensUsed,
     totalCostSaved: current.totalCostSaved + (tokensSaved * TOKEN_COST_PER_MILLION) / 1_000_000,
@@ -118,8 +142,11 @@ export function updateMetrics(update: {
     averageLangcacheLatency: 0,
     averageOpenaiLatency: 0,
     cacheHitRate: 0,
+    ragHitRate: 0,
     queryRecords: queryRecord ? [...current.queryRecords, queryRecord].slice(-100) : current.queryRecords,
   }
+
+  newMetrics.ragHitRate = newMetrics.totalRequests > 0 ? (newMetrics.ragHits / newMetrics.totalRequests) * 100 : 0
 
   localStorage.setItem(METRICS_KEY, JSON.stringify(newMetrics))
 }

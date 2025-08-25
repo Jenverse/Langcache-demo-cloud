@@ -13,6 +13,16 @@ interface Config {
   langcacheUrl: string
   cacheId: string
   serviceKey: string
+  shadowMode: boolean
+  ragEnabled: boolean
+  redisVectorUrl: string
+  redisVectorPassword: string
+  documents: Array<{
+    id: string
+    name: string
+    url: string
+    status: "pending" | "processing" | "ready" | "error"
+  }>
 }
 
 export default function Home() {

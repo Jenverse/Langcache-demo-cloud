@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { getMetrics, resetMetrics, type MetricsData } from "@/lib/metrics"
-import { BarChart3, Clock, DollarSign, Target, Zap, RotateCcw, Search } from "lucide-react"
+import { BarChart3, Clock, DollarSign, Target, Zap, RotateCcw, Search, BookOpen, Database } from "lucide-react"
 
 export function MetricsDashboard() {
   const [metrics, setMetrics] = useState<MetricsData | null>(null)
@@ -38,7 +38,7 @@ export function MetricsDashboard() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Cache Hit */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -53,6 +53,24 @@ export function MetricsDashboard() {
             <div className="flex gap-2 mt-2">
               <Badge variant="secondary">{metrics.cacheHits} hits</Badge>
               <Badge variant="outline">{metrics.cacheMisses} misses</Badge>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* RAG Context Hit */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">RAG Context</CardTitle>
+            <BookOpen className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{metrics.ragHitRate.toFixed(1)}%</div>
+            <p className="text-xs text-muted-foreground">
+              {metrics.ragHits} found / {metrics.totalRequests} total
+            </p>
+            <div className="flex gap-2 mt-2">
+              <Badge variant="secondary">{metrics.ragHits} found</Badge>
+              <Badge variant="outline">{metrics.ragMisses} not found</Badge>
             </div>
           </CardContent>
         </Card>
@@ -138,6 +156,25 @@ export function MetricsDashboard() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Knowledge Coverage */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Knowledge Coverage</CardTitle>
+            <Database className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {metrics.totalRequests > 0
+                ? `${(((metrics.cacheHits + metrics.ragHits) / metrics.totalRequests) * 100).toFixed(1)}%`
+                : "0%"}
+            </div>
+            <p className="text-xs text-muted-foreground">Cache + RAG coverage</p>
+            <div className="text-sm text-muted-foreground mt-1">
+              {metrics.cacheHits + metrics.ragHits} of {metrics.totalRequests} queries
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {metrics.queryRecords && metrics.queryRecords.length > 0 && (
@@ -155,7 +192,9 @@ export function MetricsDashboard() {
                   <TableHead>User Query</TableHead>
                   <TableHead>Cached Query</TableHead>
                   <TableHead>Similarity</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>Cache Status</TableHead>
+                  <TableHead>RAG Status</TableHead>
+                  <TableHead>Sources</TableHead>
                   <TableHead>Time</TableHead>
                 </TableRow>
               </TableHeader>
@@ -184,6 +223,18 @@ export function MetricsDashboard() {
                         <Badge variant={record.cacheHit ? "default" : "outline"}>
                           {record.cacheHit ? "Hit" : "Miss"}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={record.ragHit ? "default" : "outline"}>
+                          {record.ragHit ? "Found" : "Not Found"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {record.ragSources && record.ragSources.length > 0 ? (
+                          <Badge variant="secondary">{record.ragSources.length} docs</Badge>
+                        ) : (
+                          "None"
+                        )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {new Date(record.timestamp).toLocaleTimeString()}

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Send, Loader2, Zap, DollarSign, Search } from "lucide-react"
+import { Send, Loader2, Zap, DollarSign, Search, BookOpen } from "lucide-react"
 import { updateMetrics } from "@/lib/metrics"
 
 interface Config {
@@ -14,7 +14,10 @@ interface Config {
   langcacheUrl: string
   cacheId: string
   serviceKey: string
-  shadowMode: boolean // Added shadowMode to config interface
+  shadowMode: boolean
+  ragEnabled: boolean
+  redisVectorUrl: string
+  redisVectorPassword: string
 }
 
 interface Message {
@@ -27,6 +30,12 @@ interface Message {
   latency?: number
   tokensSaved?: number
   tokensUsed?: number
+  ragHit?: boolean
+  ragSources?: Array<{
+    documentId: string
+    score: number
+    content: string
+  }>
 }
 
 interface ChatInterfaceProps {
@@ -92,6 +101,8 @@ export function ChatInterface({ config }: ChatInterfaceProps) {
         cachedQuery: result.cachedQuery,
         similarity: result.similarity,
         cacheHit: result.cacheHit, // For shadow mode tracking
+        ragHit: result.ragHit,
+        ragSources: result.ragSources,
       })
 
       const botMessage: Message = {
@@ -103,6 +114,8 @@ export function ChatInterface({ config }: ChatInterfaceProps) {
         latency: result.latency,
         tokensUsed: result.tokensUsed,
         tokensSaved: result.tokensSaved,
+        ragHit: result.ragHit,
+        ragSources: result.ragSources,
       }
 
       setMessages((prev) => [...prev, botMessage])
@@ -127,7 +140,9 @@ export function ChatInterface({ config }: ChatInterfaceProps) {
 
   const placeholderText = config.shadowMode
     ? "Responses will always be served from your LLM but LangCache will record all the data for your analysis on cache hit or miss"
-    : "Start a conversation! Your messages will be cached for faster future responses."
+    : config.ragEnabled
+      ? "Start a conversation! Your messages will be cached and enhanced with knowledge from your documents."
+      : "Start a conversation! Your messages will be cached for faster future responses."
 
   return (
     <div className="flex flex-col h-[calc(100vh-120px)]">
@@ -135,11 +150,10 @@ export function ChatInterface({ config }: ChatInterfaceProps) {
         {messages.length === 0 && (
           <div className="text-center text-muted-foreground py-8">
             <p>{placeholderText}</p>
-            {config.shadowMode && (
-              <Badge variant="outline" className="mt-2">
-                Shadow Mode Active
-              </Badge>
-            )}
+            <div className="flex justify-center gap-2 mt-2">
+              {config.shadowMode && <Badge variant="outline">Shadow Mode Active</Badge>}
+              {config.ragEnabled && <Badge variant="outline">RAG Enabled</Badge>}
+            </div>
           </div>
         )}
 
@@ -152,17 +166,43 @@ export function ChatInterface({ config }: ChatInterfaceProps) {
 
                   {!message.isUser && (
                     <div className="space-y-2">
-                      {message.cached !== undefined && (
-                        <div className="flex items-center gap-2">
-                          {message.cached ? (
-                            <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700 text-white">
-                              🎯 SERVED FROM CACHE - {Math.round((message.similarity || 0) * 100)}% match
-                            </Badge>
-                          ) : (
-                            <Badge variant="default" className="text-xs bg-blue-600 hover:bg-blue-700 text-white">
-                              🧠 FRESH from OpenAI
-                            </Badge>
-                          )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {message.cached !== undefined && (
+                          <>
+                            {message.cached ? (
+                              <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700 text-white">
+                                🎯 SERVED FROM CACHE - {Math.round((message.similarity || 0) * 100)}% match
+                              </Badge>
+                            ) : (
+                              <Badge variant="default" className="text-xs bg-blue-600 hover:bg-blue-700 text-white">
+                                🧠 FRESH from OpenAI
+                              </Badge>
+                            )}
+                          </>
+                        )}
+
+                        {message.ragHit !== undefined && (
+                          <Badge variant={message.ragHit ? "default" : "outline"} className="text-xs">
+                            <BookOpen className="h-3 w-3 mr-1" />
+                            {message.ragHit ? "Context Found" : "No Context"}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {message.ragSources && message.ragSources.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground font-medium">Knowledge Sources:</div>
+                          {message.ragSources.map((source, index) => (
+                            <div key={index} className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge variant="secondary" className="text-xs">
+                                  Doc {source.documentId.slice(0, 8)}...
+                                </Badge>
+                                <span className="text-green-600">{Math.round(source.score * 100)}% match</span>
+                              </div>
+                              <div className="truncate">{source.content}</div>
+                            </div>
+                          ))}
                         </div>
                       )}
 
